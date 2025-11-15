@@ -1,29 +1,27 @@
+
 package com.example.movieservice.infrastructure.adapters.output.persistence.adapter;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.verify;
-
-import java.util.UUID;
-import java.time.Duration;
-
+import com.example.movieservice.application.mapper.RentalMapper;
+import com.example.movieservice.domain.model.Rental;
+import com.example.movieservice.infrastructure.adapters.output.persistence.entity.RentalDbo;
+import com.example.movieservice.infrastructure.adapters.output.persistence.repository.JpaRentalRepository;
+import com.example.movieservice.infrastructure.config.exceptions.InternalServerErrorException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import reactor.core.publisher.Mono;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
-import com.example.movieservice.application.mapper.RentalMapper;
-import com.example.movieservice.domain.model.Rental;
-import com.example.movieservice.infrastructure.adapters.output.persistence.entity.RentalDbo;
-import com.example.movieservice.infrastructure.adapters.output.persistence.repository.JpaRentalRepository;
+import java.util.UUID;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class RentalRepositoryAdapterTest {
@@ -37,178 +35,250 @@ class RentalRepositoryAdapterTest {
     @InjectMocks
     private RentalRepositoryAdapter rentalRepositoryAdapter;
 
-    private Rental domainRental;
+    private Rental rental;
     private RentalDbo rentalDbo;
-    private UUID testId;
+    private String rentalId;
 
     @BeforeEach
     void setUp() {
-        testId = UUID.randomUUID();
-        
-        domainRental = Rental.builder()
-            .rentalId(testId.toString())
-            .build();
-        
-        rentalDbo = RentalDbo.builder()
-            .id(testId)
-            .build();
+        rentalId = UUID.randomUUID().toString();
+        rental = Rental.builder().rentalId(rentalId).build();
+        rentalDbo = RentalDbo.builder().id(UUID.fromString(rentalId)).build();
     }
 
     @Test
-    void save_ShouldReturnDomainEntity_WhenValidEntity() {
-        // Given
-        when(rentalMapper.toDbo(domainRental)).thenReturn(rentalDbo);
-        when(jpaRentalRepository.save(rentalDbo)).thenReturn(Mono.just(rentalDbo));
-        when(rentalMapper.toDomain(rentalDbo)).thenReturn(domainRental);
+    void save_shouldReturnRental_whenSuccessful() {
+        when(rentalMapper.toDbo(any(Rental.class))).thenReturn(rentalDbo);
+        when(jpaRentalRepository.save(any(RentalDbo.class))).thenReturn(Mono.just(rentalDbo));
+        when(rentalMapper.toDomain(any(RentalDbo.class))).thenReturn(rental);
 
-        // When
-        Rental result = rentalRepositoryAdapter.save(domainRental)
-            .block(Duration.ofSeconds(5));
+        StepVerifier.create(rentalRepositoryAdapter.save(rental))
+                .expectNext(rental)
+                .verifyComplete();
 
-        // Then
-        assertThat(result).isNotNull();
-        verify(rentalMapper).toDbo(domainRental);
+        verify(rentalMapper).toDbo(rental);
         verify(jpaRentalRepository).save(rentalDbo);
         verify(rentalMapper).toDomain(rentalDbo);
     }
 
     @Test
-    void findById_ShouldReturnEntity_WhenEntityExists() {
-        // Given
-        when(jpaRentalRepository.findById(testId)).thenReturn(Mono.just(rentalDbo));
-        when(rentalMapper.toDomain(rentalDbo)).thenReturn(domainRental);
+    void save_shouldPropagateDuplicateKeyException_whenThrown() {
+        when(rentalMapper.toDbo(any(Rental.class))).thenReturn(rentalDbo);
+        when(jpaRentalRepository.save(any(RentalDbo.class))).thenReturn(Mono.error(new DuplicateKeyException("Duplicate key")));
 
-        // When
-        Rental result = rentalRepositoryAdapter.findById(testId.toString())
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isNotNull();
-        assertThat(result).isEqualTo(domainRental);
-        verify(jpaRentalRepository).findById(testId);
-        verify(rentalMapper).toDomain(rentalDbo);
+        StepVerifier.create(rentalRepositoryAdapter.save(rental))
+                .expectError(DuplicateKeyException.class)
+                .verify();
     }
 
     @Test
-    void findById_ShouldReturnNull_WhenEntityNotFound() {
-        // Given
-        when(jpaRentalRepository.findById(testId)).thenReturn(Mono.empty());
+    void save_shouldPropagateDataIntegrityViolationException_whenThrown() {
+        when(rentalMapper.toDbo(any(Rental.class))).thenReturn(rentalDbo);
+        when(jpaRentalRepository.save(any(RentalDbo.class))).thenReturn(Mono.error(new DataIntegrityViolationException("Data integrity violation")));
 
-        // When
-        Rental result = rentalRepositoryAdapter.findById(testId.toString())
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isNull();
-        verify(jpaRentalRepository).findById(testId);
+        StepVerifier.create(rentalRepositoryAdapter.save(rental))
+                .expectError(DataIntegrityViolationException.class)
+                .verify();
     }
 
     @Test
-    void findAll_ShouldReturnListOfEntities_WhenEntitiesExist() {
-        // Given
+    void save_shouldMapToInternalServerError_whenOtherErrorOccurs() {
+        when(rentalMapper.toDbo(any(Rental.class))).thenReturn(rentalDbo);
+        when(jpaRentalRepository.save(any(RentalDbo.class))).thenReturn(Mono.error(new RuntimeException("Some other error")));
+
+        StepVerifier.create(rentalRepositoryAdapter.save(rental))
+                .expectError(InternalServerErrorException.class)
+                .verify();
+    }
+
+    @Test
+    void findById_shouldReturnRental_whenFound() {
+        when(jpaRentalRepository.findById(any(UUID.class))).thenReturn(Mono.just(rentalDbo));
+        when(rentalMapper.toDomain(any(RentalDbo.class))).thenReturn(rental);
+
+        StepVerifier.create(rentalRepositoryAdapter.findById(rentalId))
+                .expectNext(rental)
+                .verifyComplete();
+    }
+
+    @Test
+    void findById_shouldReturnEmpty_whenNotFound() {
+        when(jpaRentalRepository.findById(any(UUID.class))).thenReturn(Mono.empty());
+
+        StepVerifier.create(rentalRepositoryAdapter.findById(rentalId))
+                .verifyComplete();
+    }
+
+    @Test
+    void findById_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.findById(any(UUID.class))).thenReturn(Mono.error(new RuntimeException("Database error")));
+
+        StepVerifier.create(rentalRepositoryAdapter.findById(rentalId))
+                .expectError(InternalServerErrorException.class)
+                .verify();
+    }
+
+    @Test
+    void findAll_shouldReturnRentals_whenSuccessful() {
         when(jpaRentalRepository.findAll()).thenReturn(Flux.just(rentalDbo));
-        when(rentalMapper.toDomain(rentalDbo)).thenReturn(domainRental);
+        when(rentalMapper.toDomain(any(RentalDbo.class))).thenReturn(rental);
 
-        // When
-        var result = rentalRepositoryAdapter.findAll()
-            .collectList()
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0)).isEqualTo(domainRental);
-        verify(jpaRentalRepository).findAll();
+        StepVerifier.create(rentalRepositoryAdapter.findAll())
+                .expectNext(rental)
+                .verifyComplete();
     }
 
     @Test
-    void deleteById_ShouldCallRepository_WhenValidId() {
-        // Given
-        when(jpaRentalRepository.deleteById(testId)).thenReturn(Mono.empty());
+    void findAll_shouldReturnEmptyFlux_whenNoRentals() {
+        when(jpaRentalRepository.findAll()).thenReturn(Flux.empty());
 
-        // When
-        rentalRepositoryAdapter.deleteById(testId.toString())
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        verify(jpaRentalRepository).deleteById(testId);
+        StepVerifier.create(rentalRepositoryAdapter.findAll())
+                .verifyComplete();
     }
 
     @Test
-    void existsById_ShouldReturnTrue_WhenEntityExists() {
-        // Given
-        when(jpaRentalRepository.existsById(testId)).thenReturn(Mono.just(true));
+    void findAll_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.findAll()).thenReturn(Flux.error(new RuntimeException("Database error")));
 
-        // When
-        Boolean result = rentalRepositoryAdapter.existsById(testId.toString())
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isTrue();
-        verify(jpaRentalRepository).existsById(testId);
+        StepVerifier.create(rentalRepositoryAdapter.findAll())
+                .expectError(InternalServerErrorException.class)
+                .verify();
     }
 
     @Test
-    void existsById_ShouldReturnFalse_WhenEntityNotExists() {
-        // Given
-        when(jpaRentalRepository.existsById(testId)).thenReturn(Mono.just(false));
+    void deleteById_shouldComplete_whenSuccessful() {
+        when(jpaRentalRepository.deleteById(any(UUID.class))).thenReturn(Mono.empty());
 
-        // When
-        Boolean result = rentalRepositoryAdapter.existsById(testId.toString())
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isFalse();
-        verify(jpaRentalRepository).existsById(testId);
+        StepVerifier.create(rentalRepositoryAdapter.deleteById(rentalId))
+                .verifyComplete();
     }
 
     @Test
-    void findBySearchTerm_ShouldReturnListOfEntities_WhenEntitiesExist() {
-        // Given
-        String searchTerm = "test";
-        Integer page = 0;
-        Integer size = 10;
-        Long offset = 0L;
-        Long limit = 10L;
-        
-        when(jpaRentalRepository.findBySearchTerm(searchTerm, limit, offset))
-            .thenReturn(Flux.just(rentalDbo));
-        when(rentalMapper.toDomain(rentalDbo)).thenReturn(domainRental);
+    void deleteById_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.deleteById(any(UUID.class))).thenReturn(Mono.error(new RuntimeException("Database error")));
 
-        // When
-        var result = rentalRepositoryAdapter.findBySearchTerm(searchTerm, page, size)
-            .collectList()
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isNotNull();
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0)).isEqualTo(domainRental);
+        StepVerifier.create(rentalRepositoryAdapter.deleteById(rentalId))
+                .expectError(InternalServerErrorException.class)
+                .verify();
     }
 
     @Test
-    void findByFilters_ShouldReturnListOfEntities_WhenEntitiesExist() {
-        // Given
-        String search = "test";
-        String status = "ACTIVE";
-        String dateFrom = "2024-01-01T00:00:00Z";
-        String dateTo = "2024-12-31T23:59:59Z";
-        Integer page = 0;
-        Integer size = 10;
-        Long offset = 0L;
-        Long limit = 10L;
-        
-        when(jpaRentalRepository.findByFilters(search, status, dateFrom, dateTo, limit, offset))
-            .thenReturn(Flux.just(rentalDbo));
-        when(rentalMapper.toDomain(rentalDbo)).thenReturn(domainRental);
+    void existsById_shouldReturnTrue_whenExists() {
+        when(jpaRentalRepository.existsById(any(UUID.class))).thenReturn(Mono.just(true));
 
-        // When
-        var result = rentalRepositoryAdapter.findByFilters(search, status, dateFrom, dateTo, page, size)
-            .collectList()
-            .block(Duration.ofSeconds(5));
+        StepVerifier.create(rentalRepositoryAdapter.existsById(rentalId))
+                .expectNext(true)
+                .verifyComplete();
+    }
 
-        // Then
-        assertThat(result).isNotNull();
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0)).isEqualTo(domainRental);
+    @Test
+    void existsById_shouldReturnFalse_whenNotExists() {
+        when(jpaRentalRepository.existsById(any(UUID.class))).thenReturn(Mono.just(false));
+
+        StepVerifier.create(rentalRepositoryAdapter.existsById(rentalId))
+                .expectNext(false)
+                .verifyComplete();
+    }
+
+    @Test
+    void existsById_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.existsById(any(UUID.class))).thenReturn(Mono.error(new RuntimeException("Database error")));
+
+        StepVerifier.create(rentalRepositoryAdapter.existsById(rentalId))
+                .expectError(InternalServerErrorException.class)
+                .verify();
+    }
+
+    @Test
+    void findBySearchTerm_shouldReturnRentals_whenSuccessful() {
+        when(jpaRentalRepository.findBySearchTerm(anyString(), anyLong(), anyLong())).thenReturn(Flux.just(rentalDbo));
+        when(rentalMapper.toDomain(any(RentalDbo.class))).thenReturn(rental);
+
+        StepVerifier.create(rentalRepositoryAdapter.findBySearchTerm("Test", 1, 10))
+                .expectNext(rental)
+                .verifyComplete();
+    }
+
+    @Test
+    void findBySearchTerm_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.findBySearchTerm(anyString(), anyLong(), anyLong())).thenReturn(Flux.error(new RuntimeException("Database error")));
+
+        StepVerifier.create(rentalRepositoryAdapter.findBySearchTerm("Test", 1, 10))
+                .expectError(InternalServerErrorException.class)
+                .verify();
+    }
+
+    @Test
+    void findByFilters_shouldReturnRentals_whenSuccessful() {
+        when(jpaRentalRepository.findByFilters(anyString(), anyString(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Flux.just(rentalDbo));
+        when(rentalMapper.toDomain(any(RentalDbo.class))).thenReturn(rental);
+
+        StepVerifier.create(rentalRepositoryAdapter.findByFilters("Test", "ACTIVE", "2023-01-01", "2023-12-31", 1, 10))
+                .expectNext(rental)
+                .verifyComplete();
+    }
+
+    @Test
+    void findByFilters_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.findByFilters(anyString(), anyString(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Flux.error(new RuntimeException("Database error")));
+
+        StepVerifier.create(rentalRepositoryAdapter.findByFilters("Test", "ACTIVE", "2023-01-01", "2023-12-31", 1, 10))
+                .expectError(InternalServerErrorException.class)
+                .verify();
+    }
+
+    @Test
+    void countBySearchTerm_shouldReturnCount_whenSuccessful() {
+        when(jpaRentalRepository.countBySearchTerm(anyString())).thenReturn(Mono.just(1L));
+
+        StepVerifier.create(rentalRepositoryAdapter.countBySearchTerm("Test"))
+                .expectNext(1L)
+                .verifyComplete();
+    }
+
+    @Test
+    void countBySearchTerm_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.countBySearchTerm(anyString())).thenReturn(Mono.error(new RuntimeException("Database error")));
+
+        StepVerifier.create(rentalRepositoryAdapter.countBySearchTerm("Test"))
+                .expectError(InternalServerErrorException.class)
+                .verify();
+    }
+
+    @Test
+    void findAllPaged_shouldReturnRentals_whenSuccessful() {
+        when(jpaRentalRepository.findAllPaged(anyLong(), anyLong())).thenReturn(Flux.just(rentalDbo));
+        when(rentalMapper.toDomain(any(RentalDbo.class))).thenReturn(rental);
+
+        StepVerifier.create(rentalRepositoryAdapter.findAllPaged(1, 10))
+                .expectNext(rental)
+                .verifyComplete();
+    }
+
+    @Test
+    void findAllPaged_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.findAllPaged(anyLong(), anyLong())).thenReturn(Flux.error(new RuntimeException("Database error")));
+
+        StepVerifier.create(rentalRepositoryAdapter.findAllPaged(1, 10))
+                .expectError(InternalServerErrorException.class)
+                .verify();
+    }
+
+    @Test
+    void countAll_shouldReturnCount_whenSuccessful() {
+        when(jpaRentalRepository.countAll()).thenReturn(Mono.just(10L));
+
+        StepVerifier.create(rentalRepositoryAdapter.countAll())
+                .expectNext(10L)
+                .verifyComplete();
+    }
+
+    @Test
+    void countAll_shouldMapToInternalServerError_whenErrorOccurs() {
+        when(jpaRentalRepository.countAll()).thenReturn(Mono.error(new RuntimeException("Database error")));
+
+        StepVerifier.create(rentalRepositoryAdapter.countAll())
+                .expectError(InternalServerErrorException.class)
+                .verify();
     }
 }
