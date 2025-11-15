@@ -1,118 +1,154 @@
+
 package com.example.movieservice.infrastructure.adapters.input.rest;
 
+import com.example.movieservice.application.dto.movie.*;
 import com.example.movieservice.domain.ports.input.RentalUseCase;
-import com.example.movieservice.application.dto.movie.CreateRentalRequestContent;
-import com.example.movieservice.application.dto.movie.CreateRentalResponseContent;
-import com.example.movieservice.application.dto.movie.GetRentalResponseContent;
-import com.example.movieservice.application.dto.movie.UpdateRentalRequestContent;
-import com.example.movieservice.application.dto.movie.UpdateRentalResponseContent;
-import com.example.movieservice.application.dto.movie.ListRentalsResponseContent;
+import com.example.movieservice.infrastructure.config.exceptions.GlobalExceptionHandler;
+import com.example.movieservice.infrastructure.config.exceptions.NotFoundException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
+import org.springframework.boot.autoconfigure.security.reactive.ReactiveSecurityAutoConfiguration;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
 
-import java.time.Duration;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
-/**
- * Unit tests for RentalController.
- * 
- * @author Jiliar Silgado <jiliar.silgado@gmail.com>
- * @version 1.0.0
- */
-@ExtendWith(MockitoExtension.class)
+@WebFluxTest(controllers = RentalController.class, excludeAutoConfiguration = {ReactiveSecurityAutoConfiguration.class})
+@Import(GlobalExceptionHandler.class)
 class RentalControllerTest {
 
-    @Mock
+    @Autowired
+    private WebTestClient webTestClient;
+
+    @MockBean
     private RentalUseCase rentalUseCase;
 
-    @InjectMocks
-    private RentalController rentalController;
+    private String rentalId;
+    private String requestId;
+
+    @BeforeEach
+    void setUp() {
+        rentalId = UUID.randomUUID().toString();
+        requestId = UUID.randomUUID().toString();
+    }
 
     @Test
-    void createRental_ShouldReturnCreated_WhenValidRequest() {
-        // Given
+    void createRental_shouldReturnCreated_whenSuccessful() {
         CreateRentalRequestContent request = CreateRentalRequestContent.builder()
-            .movieId("test-movieId")
-            .userId("test-userId")
-            .build();
+                .movieId(UUID.randomUUID().toString())
+                .userId(UUID.randomUUID().toString())
+                .rentalDays(BigDecimal.valueOf(1))
+                .build();
         CreateRentalResponseContent response = CreateRentalResponseContent.builder()
-            .build();
-        
-        when(rentalUseCase.create(any(CreateRentalRequestContent.class)))
-            .thenReturn(Mono.just(response));
+                .rentalId(rentalId)
+                .build();
+        when(rentalUseCase.create(any(CreateRentalRequestContent.class))).thenReturn(Mono.just(response));
 
-        // When
-        CreateRentalResponseContent result = rentalController.createRental(request, "test-request-id", null, null)
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertEquals(response, result);
+        webTestClient.post().uri("/rentals")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Request-ID", requestId)
+                .body(Mono.just(request), CreateRentalRequestContent.class)
+                .exchange()
+                .expectStatus().isCreated()
+                .expectBody(CreateRentalResponseContent.class)
+                .value(res -> {
+                    assert res.getRentalId().equals(rentalId);
+                });
     }
 
     @Test
-    void getRental_ShouldReturnOk_WhenEntityExists() {
-        // Given
-        String rentalId = "test-id";
-        GetRentalResponseContent response = GetRentalResponseContent.builder()
-            .build();
-        
-        when(rentalUseCase.get(anyString()))
-            .thenReturn(Mono.just(response));
+    void getRental_shouldReturnOk_whenRentalFound() {
+        GetRentalResponseContent response = new GetRentalResponseContent();
+        when(rentalUseCase.get(rentalId)).thenReturn(Mono.just(response));
 
-        // When
-        GetRentalResponseContent result = rentalController.getRental(rentalId, "test-request-id", null, null)
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertEquals(response, result);
+        webTestClient.get().uri("/rentals/{rentalId}", rentalId)
+                .header("X-Request-ID", requestId)
+                .exchange()
+                .expectStatus().isOk();
     }
 
     @Test
-    void updateRental_ShouldReturnOk_WhenValidRequest() {
-        // Given
-        String rentalId = "test-id";
+    void getRental_shouldReturnNotFound_whenRentalNotFound() {
+        when(rentalUseCase.get(rentalId)).thenReturn(Mono.error(new NotFoundException("Rental not found")));
+
+        webTestClient.get().uri("/rentals/{rentalId}", rentalId)
+                .header("X-Request-ID", requestId)
+                .exchange()
+                .expectStatus().isNotFound();
+    }
+
+    @Test
+    void updateRental_shouldReturnOk_whenSuccessful() {
         UpdateRentalRequestContent request = UpdateRentalRequestContent.builder()
-            .returnDate("updated-returnDate")
-            .status("updated-status")
-            .build();
-        UpdateRentalResponseContent response = UpdateRentalResponseContent.builder()
-            .build();
-        
-        when(rentalUseCase.update(anyString(), any(UpdateRentalRequestContent.class)))
-            .thenReturn(Mono.just(response));
+                .returnDate(Instant.now().toString())
+                .build();
+        UpdateRentalResponseContent response = new UpdateRentalResponseContent();
+        when(rentalUseCase.update(any(String.class), any(UpdateRentalRequestContent.class))).thenReturn(Mono.just(response));
 
-        // When
-        UpdateRentalResponseContent result = rentalController.updateRental(rentalId, request, "test-request-id", null, null)
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertEquals(response, result);
+        webTestClient.put().uri("/rentals/{rentalId}", rentalId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Request-ID", requestId)
+                .body(Mono.just(request), UpdateRentalRequestContent.class)
+                .exchange()
+                .expectStatus().isOk();
     }
-
 
     @Test
-    void listRentals_ShouldReturnOk() {
-        // Given
-        ListRentalsResponseContent response = ListRentalsResponseContent.builder()
-            .build();
-        
-        when(rentalUseCase.list(any(), any(), any(), any(), any(), any()))
-            .thenReturn(Mono.just(response));
+    void updateRental_shouldReturnNotFound_whenRentalNotFound() {
+        UpdateRentalRequestContent request = UpdateRentalRequestContent.builder()
+                .returnDate(Instant.now().toString())
+                .build();
+        when(rentalUseCase.update(any(String.class), any(UpdateRentalRequestContent.class))).thenReturn(Mono.error(new NotFoundException("Rental not found")));
 
-        // When
-        ListRentalsResponseContent result = rentalController.listRentals(1, 20, null, null, null, null, "test-request-id", null, null)
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertEquals(response, result);
+        webTestClient.put().uri("/rentals/{rentalId}", rentalId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Request-ID", requestId)
+                .body(Mono.just(request), UpdateRentalRequestContent.class)
+                .exchange()
+                .expectStatus().isNotFound();
     }
 
+    @Test
+    void listRentals_shouldReturnOk_whenSuccessful() {
+        ListRentalsResponseContent response = new ListRentalsResponseContent();
+        when(rentalUseCase.list(any(), any(), any(), any(), any(), any())).thenReturn(Mono.just(response));
+
+        webTestClient.get().uri("/rentals")
+                .header("X-Request-ID", requestId)
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void listRentals_shouldReturnBadRequest_whenDateFromIsAfterDateTo() {
+        String dateFrom = Instant.now().toString();
+        String dateTo = Instant.now().minusSeconds(100).toString();
+        webTestClient.get().uri(uriBuilder -> uriBuilder.path("/rentals")
+                        .queryParam("dateFrom", dateFrom)
+                        .queryParam("dateTo", dateTo)
+                        .build())
+                .header("X-Request-ID", requestId)
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
+
+    @Test
+    void listRentals_shouldReturnBadRequest_whenDateFormatIsInvalid() {
+        webTestClient.get().uri(uriBuilder -> uriBuilder.path("/rentals")
+                        .queryParam("dateFrom", "invalid-date")
+                        .queryParam("dateTo", "invalid-date")
+                        .build())
+                .header("X-Request-ID", requestId)
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
 }

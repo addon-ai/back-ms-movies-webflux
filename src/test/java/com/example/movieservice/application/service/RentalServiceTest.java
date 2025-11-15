@@ -1,284 +1,193 @@
+
 package com.example.movieservice.application.service;
 
-import com.example.movieservice.domain.ports.output.RentalRepositoryPort;
+import com.example.movieservice.application.dto.movie.*;
 import com.example.movieservice.application.mapper.RentalMapper;
-import com.example.movieservice.application.dto.movie.CreateRentalRequestContent;
-import com.example.movieservice.application.dto.movie.CreateRentalResponseContent;
-import com.example.movieservice.application.dto.movie.GetRentalResponseContent;
-import com.example.movieservice.application.dto.movie.UpdateRentalRequestContent;
-import com.example.movieservice.application.dto.movie.UpdateRentalResponseContent;
-import com.example.movieservice.application.dto.movie.ListRentalsResponseContent;
 import com.example.movieservice.domain.model.Rental;
+import com.example.movieservice.domain.ports.output.RentalRepositoryPort;
+import com.example.movieservice.infrastructure.config.exceptions.NotFoundException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
-import org.mapstruct.factory.Mappers;
-import reactor.core.publisher.Mono;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
-import java.util.List;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
-import java.time.Duration;
+import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.*;
 
-import com.example.movieservice.infrastructure.config.exceptions.NotFoundException;
-
-/**
- * Unit tests for RentalService.
- * 
- * @author Jiliar Silgado <jiliar.silgado@gmail.com>
- * @version 1.0.0
- */
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class RentalServiceTest {
 
     @Mock
     private RentalRepositoryPort rentalRepositoryPort;
 
-    @Spy
-    private RentalMapper rentalMapper = Mappers.getMapper(RentalMapper.class);
+    @Mock
+    private RentalMapper rentalMapper;
 
     @InjectMocks
     private RentalService rentalService;
 
-    @Test
-    void create_ShouldReturnResponse_WhenValidRequest() {
-        // Given
-        CreateRentalRequestContent request = CreateRentalRequestContent.builder()
-            .build();
-        Rental domainRental = Rental.builder()
-            .build();
-        Rental savedRental = Rental.builder()
-            .build();
-        CreateRentalResponseContent expectedResponse = CreateRentalResponseContent.builder()
-            .build();
+    private Rental rental;
+    private String rentalId;
 
-        when(rentalMapper.fromCreateRequest(request)).thenReturn(domainRental);
-        when(rentalRepositoryPort.save(domainRental)).thenReturn(Mono.just(savedRental));
-        when(rentalMapper.toCreateResponse(savedRental)).thenReturn(expectedResponse);
-
-        // When
-        CreateRentalResponseContent result = rentalService.create(request)
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isEqualTo(expectedResponse);
-        verify(rentalRepositoryPort).save(domainRental);
+    @BeforeEach
+    void setUp() {
+        rentalId = UUID.randomUUID().toString();
+        rental = Rental.builder().rentalId(rentalId).build();
     }
 
     @Test
-    void create_ShouldThrowException_WhenRepositoryFails() {
-        // Given
-        CreateRentalRequestContent request = CreateRentalRequestContent.builder()
-            .build();
-        Rental domainRental = Rental.builder()
-            .build();
-        RuntimeException repositoryException = new RuntimeException("Database error");
+    void create_shouldReturnCreateRentalResponseContent_whenSuccessful() {
+        CreateRentalRequestContent request = new CreateRentalRequestContent();
+        CreateRentalResponseContent response = new CreateRentalResponseContent();
 
-        when(rentalMapper.fromCreateRequest(request)).thenReturn(domainRental);
-        when(rentalRepositoryPort.save(domainRental)).thenReturn(Mono.error(repositoryException));
+        when(rentalMapper.fromCreateRequest(any(CreateRentalRequestContent.class))).thenReturn(rental);
+        when(rentalRepositoryPort.save(any(Rental.class))).thenReturn(Mono.just(rental));
+        when(rentalMapper.toCreateResponse(any(Rental.class))).thenReturn(response);
 
-        // When & Then
-        assertThatThrownBy(() -> rentalService.create(request).block(Duration.ofSeconds(5)))
-            .isInstanceOf(RuntimeException.class)
-            .hasMessage("Database error");
+        StepVerifier.create(rentalService.create(request))
+                .expectNext(response)
+                .verifyComplete();
+
+        verify(rentalMapper).fromCreateRequest(request);
+        verify(rentalRepositoryPort).save(rental);
+        verify(rentalMapper).toCreateResponse(rental);
     }
 
     @Test
-    void get_ShouldReturnResponse_WhenEntityExists() {
-        // Given
-        String rentalId = "test-id";
-        Rental domainRental = Rental.builder()
-            .build();
-        GetRentalResponseContent expectedResponse = GetRentalResponseContent.builder()
-            .build();
+    void create_shouldReturnError_whenRepositoryFails() {
+        CreateRentalRequestContent request = new CreateRentalRequestContent();
+        when(rentalMapper.fromCreateRequest(any(CreateRentalRequestContent.class))).thenReturn(rental);
+        when(rentalRepositoryPort.save(any(Rental.class))).thenReturn(Mono.error(new RuntimeException("Database error")));
 
-        when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.just(domainRental));
-        when(rentalMapper.toGetResponse(domainRental)).thenReturn(expectedResponse);
-
-        // When
-        GetRentalResponseContent result = rentalService.get(rentalId)
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isEqualTo(expectedResponse);
-        verify(rentalRepositoryPort).findById(rentalId);
+        StepVerifier.create(rentalService.create(request))
+                .expectError(RuntimeException.class)
+                .verify();
     }
 
     @Test
-    void get_ShouldThrowNotFoundException_WhenEntityNotFound() {
-        // Given
-        String rentalId = "non-existent-id";
+    void get_shouldReturnGetRentalResponseContent_whenRentalFound() {
+        GetRentalResponseContent response = new GetRentalResponseContent();
+        when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.just(rental));
+        when(rentalMapper.toGetResponse(any(Rental.class))).thenReturn(response);
+
+        StepVerifier.create(rentalService.get(rentalId))
+                .expectNext(response)
+                .verifyComplete();
+    }
+
+    @Test
+    void get_shouldThrowNotFoundException_whenRentalNotFound() {
         when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.empty());
 
-        // When & Then
-        assertThatThrownBy(() -> rentalService.get(rentalId).block(Duration.ofSeconds(5)))
-            .isInstanceOf(NotFoundException.class)
-            .hasMessage("Rental not found");
+        StepVerifier.create(rentalService.get(rentalId))
+                .expectError(NotFoundException.class)
+                .verify();
     }
 
     @Test
-    void get_ShouldThrowException_WhenRepositoryFails() {
-        // Given
-        String rentalId = "test-id";
-        RuntimeException repositoryException = new RuntimeException("Database error");
-        when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.error(repositoryException));
+    void get_shouldReturnError_whenRepositoryFails() {
+        when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.error(new RuntimeException("Database error")));
 
-        // When & Then
-        assertThatThrownBy(() -> rentalService.get(rentalId).block(Duration.ofSeconds(5)))
-            .isInstanceOf(RuntimeException.class)
-            .hasMessage("Database error");
+        StepVerifier.create(rentalService.get(rentalId))
+                .expectError(RuntimeException.class)
+                .verify();
     }
 
     @Test
-    void update_ShouldReturnResponse_WhenValidRequest() {
-        // Given
-        String rentalId = "test-id";
-        UpdateRentalRequestContent request = UpdateRentalRequestContent.builder()
-            .build();
-        Rental existingRental = Rental.builder()
-            .build();
-        Rental updatedRental = Rental.builder()
-            .build();
-        UpdateRentalResponseContent expectedResponse = UpdateRentalResponseContent.builder()
-            .build();
+    void update_shouldReturnUpdateRentalResponseContent_whenSuccessful() {
+        UpdateRentalRequestContent request = new UpdateRentalRequestContent();
+        UpdateRentalResponseContent response = new UpdateRentalResponseContent();
 
-        when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.just(existingRental));
-        when(rentalRepositoryPort.save(any(Rental.class))).thenReturn(Mono.just(updatedRental));
-        when(rentalMapper.toUpdateResponse(any(Rental.class))).thenReturn(expectedResponse);
+        when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.just(rental));
+        doNothing().when(rentalMapper).updateEntityFromRequest(any(UpdateRentalRequestContent.class), any(Rental.class));
+        when(rentalRepositoryPort.save(any(Rental.class))).thenReturn(Mono.just(rental));
+        when(rentalMapper.toUpdateResponse(any(Rental.class))).thenReturn(response);
 
-        // When
-        UpdateRentalResponseContent result = rentalService.update(rentalId, request)
-            .block(Duration.ofSeconds(5));
+        StepVerifier.create(rentalService.update(rentalId, request))
+                .expectNext(response)
+                .verifyComplete();
 
-        // Then
-        assertThat(result).isEqualTo(expectedResponse);
-        verify(rentalRepositoryPort).save(any(Rental.class));
+        verify(rentalMapper).updateEntityFromRequest(request, rental);
+        verify(rentalRepositoryPort).save(rental);
+        verify(rentalMapper).toUpdateResponse(rental);
     }
 
     @Test
-    void update_ShouldThrowNotFoundException_WhenEntityNotFound() {
-        // Given
-        String rentalId = "non-existent-id";
-        UpdateRentalRequestContent request = UpdateRentalRequestContent.builder()
-            .build();
+    void update_shouldThrowNotFoundException_whenRentalNotFound() {
+        UpdateRentalRequestContent request = new UpdateRentalRequestContent();
         when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.empty());
 
-        // When & Then
-        assertThatThrownBy(() -> rentalService.update(rentalId, request).block(Duration.ofSeconds(5)))
-            .isInstanceOf(NotFoundException.class)
-            .hasMessage("Rental not found");
+        StepVerifier.create(rentalService.update(rentalId, request))
+                .expectError(NotFoundException.class)
+                .verify();
     }
 
     @Test
-    void update_ShouldThrowException_WhenRepositoryFails() {
-        // Given
-        String rentalId = "test-id";
-        UpdateRentalRequestContent request = UpdateRentalRequestContent.builder()
-            .build();
-        Rental existingRental = Rental.builder()
-            .build();
-        RuntimeException repositoryException = new RuntimeException("Database error");
+    void update_shouldReturnError_whenRepositoryFails() {
+        UpdateRentalRequestContent request = new UpdateRentalRequestContent();
+        when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.just(rental));
+        doNothing().when(rentalMapper).updateEntityFromRequest(any(UpdateRentalRequestContent.class), any(Rental.class));
+        when(rentalRepositoryPort.save(any(Rental.class))).thenReturn(Mono.error(new RuntimeException("Database error")));
 
-        when(rentalRepositoryPort.findById(rentalId)).thenReturn(Mono.just(existingRental));
-        when(rentalRepositoryPort.save(any(Rental.class))).thenReturn(Mono.error(repositoryException));
-
-        // When & Then
-        assertThatThrownBy(() -> rentalService.update(rentalId, request).block(Duration.ofSeconds(5)))
-            .isInstanceOf(RuntimeException.class)
-            .hasMessage("Database error");
-    }
-
-
-    @Test
-    void list_ShouldReturnResponse_WhenValidRequest() {
-        // Given
-        List<Rental> rentals = Collections.singletonList(Rental.builder().build());
-        ListRentalsResponseContent expectedResponse = ListRentalsResponseContent.builder().build();
-        
-        when(rentalRepositoryPort.findByFilters(any(), any(), any(), any(), any(), any())).thenReturn(Flux.fromIterable(rentals));
-        when(rentalMapper.toListResponse(rentals, 1, 20)).thenReturn(expectedResponse);
-
-        // When
-        ListRentalsResponseContent result = rentalService.list(1, 20, null, null, null, null)
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isEqualTo(expectedResponse);
-        verify(rentalRepositoryPort).findByFilters(any(), any(), any(), any(), any(), any());
+        StepVerifier.create(rentalService.update(rentalId, request))
+                .expectError(RuntimeException.class)
+                .verify();
     }
 
     @Test
-    void list_ShouldReturnResponse_WhenSearchTermProvided() {
-        // Given
-        String searchTerm = "test search";
-        Integer page = 1;
-        Integer size = 10;
-        List<Rental> rentals = Collections.singletonList(Rental.builder().build());
-        ListRentalsResponseContent expectedResponse = ListRentalsResponseContent.builder().build();
-        
-        when(rentalRepositoryPort.findByFilters(any(), any(), any(), any(), any(), any())).thenReturn(Flux.fromIterable(rentals));
-        when(rentalMapper.toListResponse(rentals, page, size)).thenReturn(expectedResponse);
+    void list_shouldReturnListRentalsResponseContent_whenSuccessful() {
+        ListRentalsResponseContent response = new ListRentalsResponseContent();
+        when(rentalRepositoryPort.findByFilters(any(), any(), any(), any(), any(), any())).thenReturn(Flux.just(rental));
+        when(rentalMapper.toListResponse(any(), anyInt(), anyInt())).thenReturn(response);
 
-        // When
-        ListRentalsResponseContent result = rentalService.list(page, size, searchTerm, null, null, null)
-            .block(Duration.ofSeconds(5));
-
-        // Then
-        assertThat(result).isEqualTo(expectedResponse);
-        verify(rentalRepositoryPort).findByFilters(any(), any(), any(), any(), any(), any());
+        StepVerifier.create(rentalService.list(1, 10, "Test", "ACTIVE", "2023-01-01", "2023-12-31"))
+                .expectNext(response)
+                .verifyComplete();
     }
 
     @Test
-    void list_ShouldReturnResponse_WhenNullParameters() {
-        // Given
-        List<Rental> rentals = Collections.emptyList();
-        ListRentalsResponseContent expectedResponse = ListRentalsResponseContent.builder()
-            .rentals(Collections.emptyList())
-            .page(java.math.BigDecimal.valueOf(1))
-            .size(java.math.BigDecimal.valueOf(20))
-            .total(java.math.BigDecimal.valueOf(0))
-            .totalPages(java.math.BigDecimal.valueOf(0))
-            .build();
-        
-        when(rentalRepositoryPort.findByFilters(any(), any(), any(), any(), any(), any())).thenReturn(Flux.fromIterable(rentals));
-        when(rentalMapper.toListResponse(rentals, 1, 20)).thenReturn(expectedResponse);
+    void list_shouldReturnListRentalsResponseContentWithDefaults_whenParametersAreNull() {
+        ListRentalsResponseContent response = new ListRentalsResponseContent();
+        String defaultStatus = "ACTIVE";
+        String defaultDateFrom = Instant.now().minus(30, ChronoUnit.DAYS).toString();
+        String defaultDateTo = Instant.now().toString();
 
-        // When
-        ListRentalsResponseContent result = rentalService.list(null, null, null, null, null, null)
-            .block(Duration.ofSeconds(5));
+        when(rentalRepositoryPort.findByFilters(
+            isNull(),
+            eq(defaultStatus),
+            anyString(),
+            anyString(),
+            isNull(),
+            isNull()
+        )).thenReturn(Flux.empty());
 
-        // Then
-        assertThat(result).isNotNull();
-        assertThat(result.getRentals()).isNotNull().isEmpty();
-        assertThat(result.getPage()).isEqualTo(java.math.BigDecimal.valueOf(1));
-        assertThat(result.getSize()).isEqualTo(java.math.BigDecimal.valueOf(20));
-        assertThat(result.getTotal()).isEqualTo(java.math.BigDecimal.valueOf(0));
-        assertThat(result.getTotalPages()).isEqualTo(java.math.BigDecimal.valueOf(0));
-        verify(rentalRepositoryPort).findByFilters(any(), any(), any(), any(), any(), any());
+        when(rentalMapper.toListResponse(
+            eq(Collections.emptyList()),
+            eq(1),
+            eq(20)
+        )).thenReturn(response);
+
+        StepVerifier.create(rentalService.list(null, null, null, null, null, null))
+                .expectNext(response)
+                .verifyComplete();
     }
 
     @Test
-    void list_ShouldThrowException_WhenRepositoryFails() {
-        // Given
-        RuntimeException repositoryException = new RuntimeException("Database error");
-        when(rentalRepositoryPort.findByFilters(any(), any(), any(), any(), any(), any())).thenReturn(Flux.error(repositoryException));
+    void list_shouldReturnError_whenRepositoryFails() {
+        when(rentalRepositoryPort.findByFilters(any(), any(), any(), any(), any(), any())).thenReturn(Flux.error(new RuntimeException("Database error")));
 
-        // When & Then
-        assertThatThrownBy(() -> rentalService.list(1, 20, null, null, null, null).block(Duration.ofSeconds(5)))
-            .isInstanceOf(RuntimeException.class)
-            .hasMessage("Database error");
+        StepVerifier.create(rentalService.list(1, 10, "Test", "ACTIVE", "2023-01-01", "2023-12-31"))
+                .expectError(RuntimeException.class)
+                .verify();
     }
 }
